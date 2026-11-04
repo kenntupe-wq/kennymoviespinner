@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spin a Genre</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#1b1430;--panel:#261c42;--ink:#f6efe3;--mute:#b9aed0;--gold:#ffc044;--red:#e8433c}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:400 16px/1.5 "DM Sans",system-ui,sans-serif;min-height:100vh;padding:24px 16px 64px;display:flex;flex-direction:column;align-items:center}
+h1{font:400 clamp(2rem,7vw,3.4rem)/1 "Bowlby One",sans-serif;text-align:center;letter-spacing:.01em}
+.sub{color:var(--mute);margin:8px 0 24px;text-align:center}
+.stage{position:relative;width:min(92vw,420px);aspect-ratio:1}
+canvas{width:100%;height:100%;display:block}
+.pointer{position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:0;height:0;border:14px solid transparent;border-top:26px solid var(--gold);border-bottom:0;filter:drop-shadow(0 2px 0 rgba(0,0,0,.4));z-index:2}
+.hub{position:absolute;inset:0;margin:auto;width:92px;height:92px;border-radius:50%;border:4px solid var(--bg);background:var(--gold);color:#2a1a00;font:400 1.1rem "Bowlby One",sans-serif;cursor:pointer}
+.hub:hover:not(:disabled){background:#ffd06e}
+.hub:disabled{cursor:wait;opacity:.9}
+:focus-visible{outline:3px solid #fff;outline-offset:3px}
+#result{margin-top:28px;font:400 clamp(1.6rem,6vw,2.4rem) "Bowlby One",sans-serif;text-align:center;min-height:1.2em}
+.bar{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin:12px 0 0}
+.btn{background:var(--panel);color:var(--ink);border:1px solid #4a3b78;border-radius:8px;padding:9px 16px;font:500 .95rem "DM Sans",sans-serif;cursor:pointer}
+.btn:hover{border-color:var(--gold)}
+.btn[hidden]{display:none}
+#movies{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:18px;width:min(100%,900px);margin-top:24px}
+.m{text-decoration:none;color:inherit;display:block}
+.m img,.m .ph{width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:6px;background:var(--panel);display:grid;place-items:center;color:var(--mute);font-size:.85rem;text-align:center;padding:8px}
+.m b{display:block;margin-top:8px;font-weight:700;line-height:1.25}
+.m span{color:var(--mute);font-size:.88rem}
+.m:hover b{color:var(--gold)}
+#msg{margin-top:18px;color:var(--mute);text-align:center;max-width:520px}
+#msg.err{color:#ff9b94}
+details{margin-top:40px;width:min(100%,520px);background:var(--panel);border-radius:10px;padding:14px 18px;color:var(--mute);font-size:.92rem}
+summary{cursor:pointer;color:var(--ink);font-weight:500}
+details p{margin:10px 0}
+details a{color:var(--gold)}
+.row{display:flex;gap:8px;margin-top:8px}
+input{flex:1;min-width:0;background:var(--bg);color:var(--ink);border:1px solid #4a3b78;border-radius:8px;padding:9px 12px;font:inherit}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<h1>Spin a Genre</h1>
+<p class="sub">Can’t pick a movie? Let the wheel decide, then see what’s popular in that genre.</p>
+
+<div class="stage">
+  <div class="pointer"></div>
+  <canvas id="wheel" width="840" height="840" aria-label="Genre wheel"></canvas>
+  <button class="hub" id="spin" type="button">SPIN</button>
+</div>
+
+<div id="result" aria-live="polite"></div>
+<div class="bar">
+  <button class="btn" id="more" type="button" hidden>Show different movies</button>
+  <button class="btn" id="pick" type="button" hidden>Pick one for me</button>
+</div>
+<p id="msg"></p>
+<section id="movies" aria-label="Movies"></section>
+
+<details id="keybox">
+  <summary>Movie lookup setup</summary>
+  <p>Movies come from TMDB. Paste a free API key (the “API Key” or “v3 auth” one) to turn it on. It stays in this browser only. <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Get a key</a></p>
+  <div class="row">
+    <input id="key" type="password" placeholder="TMDB API key" autocomplete="off">
+    <button class="btn" id="save" type="button">Save key</button>
+  </div>
+</details>
+
+<script>
+const GENRES=[
+  {n:"Action",id:28,c:"#e8433c"},{n:"Comedy",id:35,c:"#ffb703"},
+  {n:"Drama",id:18,c:"#7b5cd6"},{n:"Horror",id:27,c:"#4a2a5e"},
+  {n:"Sci-Fi",id:878,c:"#1fa6c9"},{n:"Romance",id:10749,c:"#e0689b"},
+  {n:"Thriller",id:53,c:"#3b6b5a"},{n:"Animation",id:16,c:"#52b788"},
+  {n:"Adventure",id:12,c:"#f07c2a"},{n:"Fantasy",id:14,c:"#3f5fc0"}
+];
+const $=id=>document.getElementById(id);
+const cv=$("wheel"),ctx=cv.getContext("2d"),S=cv.width,R=S/2-8,seg=2*Math.PI/GENRES.length;
+let rot=0,spinning=false,current=null,pool=[];
+
+function draw(){
+  ctx.clearRect(0,0,S,S);
+  ctx.save();ctx.translate(S/2,S/2);
+  GENRES.forEach((g,i)=>{
+    const a=rot+i*seg;
+    ctx.beginPath();ctx.moveTo(0,0);ctx.arc(0,0,R,a,a+seg);ctx.closePath();
+    ctx.fillStyle=g.c;ctx.fill();
+    ctx.lineWidth=4;ctx.strokeStyle="#1b1430";ctx.stroke();
+    ctx.save();ctx.rotate(a+seg/2);ctx.textAlign="right";ctx.textBaseline="middle";
+    ctx.fillStyle="#fff";ctx.font="400 40px 'Bowlby One',sans-serif";
+    ctx.shadowColor="rgba(0,0,0,.35)";ctx.shadowBlur=6;
+    ctx.fillText(g.n,R-30,0);ctx.restore();
+  });
+  ctx.beginPath();ctx.arc(0,0,R,0,2*Math.PI);ctx.lineWidth=8;ctx.strokeStyle="#ffc044";ctx.stroke();
+  ctx.restore();
+}
+function indexAtPointer(){
+  const t=((-Math.PI/2-rot)%(2*Math.PI)+2*Math.PI)%(2*Math.PI);
+  return Math.floor(t/seg);
+}
+function spin(){
+  if(spinning)return;
+  spinning=true;$("spin").disabled=true;
+  $("result").textContent="";$("movies").innerHTML="";$("msg").textContent="";$("msg").className="";
+  $("more").hidden=$("pick").hidden=true;
+  const start=rot,total=Math.PI*2*(5+Math.random()*3)+Math.random()*Math.PI*2,dur=4600,t0=performance.now();
+  (function step(now){
+    const p=Math.min((now-t0)/dur,1),e=1-Math.pow(1-p,4);
+    rot=start+total*e;draw();
+    if(p<1)return requestAnimationFrame(step);
+    spinning=false;$("spin").disabled=false;
+    current=GENRES[indexAtPointer()];
+    $("result").textContent=current.n;
+    load();
+  })(t0);
+}
+
+const getKey=()=>{try{return localStorage.getItem("tmdb_key")||""}catch(e){return ""}};
+async function load(){
+  const key=getKey();
+  if(!key){
+    $("msg").textContent="Add a free TMDB key below to see movies for this genre.";
+    $("keybox").open=true;return;
+  }
+  $("msg").textContent="Finding movies…";
+  const page=1+Math.floor(Math.random()*5);
+  const url=`https://api.themoviedb.org/3/discover/movie?with_genres=${current.id}&sort_by=popularity.desc&vote_count.gte=500&include_adult=false&language=en-US&page=${page}`+(key.length<40?`&api_key=${encodeURIComponent(key)}`:"");
+  try{
+    const r=await fetch(url,key.length>=40?{headers:{Authorization:"Bearer "+key}}:undefined);
+    if(r.status===401)throw new Error("TMDB rejected that key. Check it and save it again.");
+    if(!r.ok)throw new Error("TMDB returned an error ("+r.status+"). Try again.");
+    const d=await r.json();
+    pool=d.results.filter(m=>m.poster_path).sort(()=>Math.random()-.5);
+    if(!pool.length)throw new Error("No movies came back. Spin again.");
+    $("msg").textContent="";show();
+    $("more").hidden=$("pick").hidden=false;
+  }catch(e){
+    $("msg").textContent=e.message.includes("Failed to fetch")?"Couldn’t reach TMDB. Check your connection.":e.message;
+    $("msg").className="err";
+  }
+}
+function show(){
+  const picks=pool.splice(0,6);
+  if(picks.length<6)load();
+  $("movies").innerHTML=picks.map(m=>{
+    const y=(m.release_date||"").slice(0,4);
+    return `<a class="m" href="https://www.themoviedb.org/movie/${m.id}" target="_blank" rel="noopener">
+      <img src="https://image.tmdb.org/t/p/w342${m.poster_path}" alt="${esc(m.title)} poster" loading="lazy">
+      <b>${esc(m.title)}</b><span>${y}${y?" · ":""}★ ${m.vote_average.toFixed(1)}</span></a>`}).join("");
+}
+function esc(s){return s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+
+$("spin").onclick=spin;
+$("more").onclick=()=>pool.length>=1?show():load();
+$("pick").onclick=()=>{
+  const all=[...document.querySelectorAll(".m")];
+  if(all.length)window.open(all[Math.floor(Math.random()*all.length)].href,"_blank","noopener");
+};
+$("save").onclick=()=>{
+  const v=$("key").value.trim();if(!v)return;
+  try{localStorage.setItem("tmdb_key",v)}catch(e){}
+  $("key").value="";$("keybox").open=false;
+  if(current)load();else{$("msg").textContent="Key saved. Spin the wheel.";$("msg").className=""}
+};
+draw();
+document.fonts&&document.fonts.ready.then(draw);
+</script>
+</body>
+</html>
